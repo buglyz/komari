@@ -36,6 +36,6 @@ func Execute() {
 }
 
 func init() {
-	RootCmd.PersistentFlags().StringVarP(&flags.DatabaseType, "db-type", "t", "sqlite", "Database type (sqlite)")
-	RootCmd.PersistentFlags().StringVarP(&flags.DatabaseFile, "database", "d", "./data/komari.db", "SQLite database file path")
+	RootCmd.PersistentFlags().StringVarP(&flags.DatabaseType, "db-type", "t", "sqlite", "Database type (sqlite, mysql, postgres)")
+	RootCmd.PersistentFlags().StringVarP(&flags.DatabaseFile, "database", "d", "./data/komari.db", "SQLite database file path, or DSN when --db-type is mysql/postgres")
 }

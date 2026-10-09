@@ -16,6 +16,8 @@ import (
 	"github.com/komari-monitor/komari/internal/migrations"
 	"github.com/komari-monitor/komari/internal/sqlitetune"
 	logger "github.com/komari-monitor/komari/utils/log"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -204,6 +206,19 @@ func resolveDatabaseFile() string {
 		dbFile = "./data/komari.db"
 	}
 	return dbFile
+}
+
+// resolveNetworkDSN 返回 MySQL/PostgreSQL 主库的连接 DSN。
+// 优先取 --database 传入的值，为空时回退到环境变量 KOMARI_DB_DSN。
+func resolveNetworkDSN() (string, error) {
+	dsn := strings.TrimSpace(flags.DatabaseFile)
+	if dsn == "" {
+		dsn = strings.TrimSpace(os.Getenv("KOMARI_DB_DSN"))
+	}
+	if dsn == "" {
+		return "", fmt.Errorf("no DSN provided for %s: use --database <dsn> or KOMARI_DB_DSN", flags.DatabaseType)
+	}
+	return dsn, nil
 }
 
 // backupOnVersionUpgrade 在检测到版本升级时，把当前 ./data 打包到
@@ -423,6 +438,35 @@ func doInitialize() error {
 		}
 		if err := instance.Exec("PRAGMA wal_checkpoint(TRUNCATE)").Error; err != nil {
 			logger.Errorf("dbcore", "Failed to checkpoint SQLite WAL at startup: %v", err)
+		}
+	case flags.DatabaseTypeMySQL:
+		dsn, dsnErr := resolveNetworkDSN()
+		if dsnErr != nil {
+			return dsnErr
+		}
+		instance, err = gorm.Open(mysql.Open(dsn), logConfig)
+		if err != nil {
+			return fmt.Errorf("failed to connect to MySQL database: %w", err)
+		}
+		// 网络数据库可以安全地保持少量长连接。
+		if sqlDB, dbErr := instance.DB(); dbErr == nil {
+			sqlDB.SetMaxOpenConns(10)
+			sqlDB.SetMaxIdleConns(5)
+			sqlDB.SetConnMaxLifetime(time.Hour)
+		}
+	case flags.DatabaseTypePostgres:
+		dsn, dsnErr := resolveNetworkDSN()
+		if dsnErr != nil {
+			return dsnErr
+		}
+		instance, err = gorm.Open(postgres.Open(dsn), logConfig)
+		if err != nil {
+			return fmt.Errorf("failed to connect to PostgreSQL database: %w", err)
+		}
+		if sqlDB, dbErr := instance.DB(); dbErr == nil {
+			sqlDB.SetMaxOpenConns(10)
+			sqlDB.SetMaxIdleConns(5)
+			sqlDB.SetConnMaxLifetime(time.Hour)
 		}
 	default:
 		return fmt.Errorf("unsupported database type: %s (supported: %s)", flags.DatabaseType, flags.SupportedDatabaseTypes())
