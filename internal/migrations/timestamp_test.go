@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -33,6 +34,23 @@ func TestLegacyTimestampMigrationUsesLegacyTZ(t *testing.T) {
 	}
 	want := time.Date(2026, 7, 17, 1, 30, 0, 123456789, time.UTC)
 	assertMigratedLogTime(t, db, want)
+}
+
+func TestLegacyTimestampMigrationSkipsNonSQLite(t *testing.T) {
+	db, err := gorm.Open(postgres.New(postgres.Config{
+		DSN:                  "host=127.0.0.1 port=1 user=unused dbname=unused sslmode=disable",
+		PreferSimpleProtocol: true,
+	}), &gorm.Config{
+		DisableAutomaticPing: true,
+		Logger:               logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("open postgres dialector: %v", err)
+	}
+
+	if err := migrateLegacyTimestampColumns(db); err != nil {
+		t.Fatalf("non-SQLite timestamp migration should be skipped: %v", err)
+	}
 }
 
 func TestParseLegacyTimestampAcceptsHistoricalEpochUnits(t *testing.T) {

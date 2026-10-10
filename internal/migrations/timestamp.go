@@ -67,6 +67,9 @@ type timestampRow struct {
 // migrateLegacyTimestampColumns makes old offset-free SQLite values
 // unambiguous before any current model scans them as time.Time.
 func migrateLegacyTimestampColumns(db *gorm.DB) error {
+	if db.Dialector.Name() != "sqlite" {
+		return nil
+	}
 	if timestampMigrationDone(db) {
 		return nil
 	}
@@ -215,7 +218,7 @@ func timestampMigrationDone(db *gorm.DB) bool {
 		return false
 	}
 	var item appconfig.ConfigItem
-	if err := db.Where("key = ?", timestampUTCMigrationKey).First(&item).Error; err != nil {
+	if err := db.Where(map[string]any{"key": timestampUTCMigrationKey}).First(&item).Error; err != nil {
 		return false
 	}
 	return item.Value == "true"

@@ -258,7 +258,7 @@ func backupOnVersionUpgrade() {
 	// 需要备份（升级或从旧稳定版首次带版本标记启动）。
 	// 先做一次 WAL checkpoint，确保 komari.db 主文件包含最新数据，
 	// 避免备份出的库缺少仍留在 -wal 中的写入。
-	if instance != nil {
+	if flags.IsSQLite() && instance != nil {
 		instance.Exec("PRAGMA wal_checkpoint(TRUNCATE);")
 	}
 

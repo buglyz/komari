@@ -4,12 +4,16 @@ import "testing"
 
 func TestNormalizeDatabaseType(t *testing.T) {
 	tests := map[string]string{
-		"":          DatabaseTypeSQLite,
-		"sqlite":    DatabaseTypeSQLite,
-		" SQLite ":  DatabaseTypeSQLite,
-		"SQLITE":    DatabaseTypeSQLite,
-		"postgres":  "postgres",
-		" postgres": "postgres",
+		"":           DatabaseTypeSQLite,
+		"sqlite":     DatabaseTypeSQLite,
+		" SQLite ":   DatabaseTypeSQLite,
+		"SQLITE":     DatabaseTypeSQLite,
+		"postgres":   DatabaseTypePostgres,
+		" postgres":  DatabaseTypePostgres,
+		"mariadb":    DatabaseTypeMySQL,
+		"postgresql": DatabaseTypePostgres,
+		"pg":         DatabaseTypePostgres,
+		"pgx":        DatabaseTypePostgres,
 	}
 
 	for input, want := range tests {

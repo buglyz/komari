@@ -30,11 +30,11 @@ type legacyModelConfig struct {
 	OAuthEnabled               bool    `json:"o_auth_enabled" gorm:"default:false"`
 	OAuthProvider              string  `json:"o_auth_provider" gorm:"type:varchar(50);default:'github'"`
 	DisablePasswordLogin       bool    `json:"disable_password_login" gorm:"default:false"`
-	CustomHead                 string  `json:"custom_head" gorm:"type:longtext"`
-	CustomBody                 string  `json:"custom_body" gorm:"type:longtext"`
+	CustomHead                 string  `json:"custom_head" gorm:"type:text"`
+	CustomBody                 string  `json:"custom_body" gorm:"type:text"`
 	NotificationEnabled        bool    `json:"notification_enabled" gorm:"default:false"`
 	NotificationMethod         string  `json:"notification_method" gorm:"type:varchar(64);default:'none'"`
-	NotificationTemplate       string  `json:"notification_template" gorm:"type:longtext;default:'{{emoji}}{{emoji}}{{emoji}}\nEvent: {{event}}\nClients: {{client}}\nMessage: {{message}}\nTime: {{time}}'"`
+	NotificationTemplate       string  `json:"notification_template" gorm:"type:text;default:'{{emoji}}{{emoji}}{{emoji}}\nEvent: {{event}}\nClients: {{client}}\nMessage: {{message}}\nTime: {{time}}'"`
 	ExpireNotificationEnabled  bool    `json:"expire_notification_enabled" gorm:"default:false"`
 	ExpireNotificationLeadDays int     `json:"expire_notification_lead_days" gorm:"default:7"`
 	LoginNotification          bool    `json:"login_notification" gorm:"default:false"`
@@ -140,18 +140,18 @@ func migrateDeprecatedMetricRetentionConfig(db *gorm.DB) error {
 	if !db.Migrator().HasTable(&appconfig.ConfigItem{}) {
 		return nil
 	}
-	return db.Delete(&appconfig.ConfigItem{}, "key = ?", "metric_retention_days").Error
+	return db.Delete(&appconfig.ConfigItem{}, map[string]any{"key": "metric_retention_days"}).Error
 }
 
 func migrateRemovedCompatibilityConfig(db *gorm.DB) error {
 	if !db.Migrator().HasTable(&appconfig.ConfigItem{}) {
 		return nil
 	}
-	return db.Delete(&appconfig.ConfigItem{}, "key IN ?", []string{
+	return db.Delete(&appconfig.ConfigItem{}, map[string]any{"key": []string{
 		"nezha_compat_enabled",
 		"nezha_compat_listen",
 		"low_resource_mode",
-	}).Error
+	}}).Error
 }
 
 func hasLegacyConfigTable(db *gorm.DB) bool {

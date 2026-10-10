@@ -25,9 +25,11 @@ var ChpasswdCmd = &cobra.Command{
 			cmd.Help()
 			return
 		}
-		if _, err := os.Stat(flags.DatabaseFile); os.IsNotExist(err) {
-			cmd.Println("Database file does not exist.")
-			return
+		if flags.IsSQLite() {
+			if _, err := os.Stat(flags.DatabaseFile); os.IsNotExist(err) {
+				cmd.Println("Database file does not exist.")
+				return
+			}
 		}
 		user := &models.User{}
 		dbcore.GetDBInstance().Model(&models.User{}).First(user)
