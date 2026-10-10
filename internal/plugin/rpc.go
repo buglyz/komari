@@ -64,6 +64,7 @@ func (m *Manager) rpcHandler(short, method string) rpc.Handler {
 		resultCh := make(chan any, 1)
 		errCh := make(chan *rpc.JsonRpcError, 1)
 		queued := host.RunOnLoop(func(vm *goja.Runtime) {
+			defer m.persistAfterJob(short)
 			_ = host.RunJob(vm, "plugin rpc "+method, func() error {
 				params := vm.ToValue(req.Params)
 				if params == nil {

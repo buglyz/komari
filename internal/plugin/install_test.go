@@ -44,6 +44,30 @@ func TestInstallZipDefaultsEntryToScriptJS(t *testing.T) {
 	}
 }
 
+func TestPluginManifestRestoresAfterRuntimeCacheRemoval(t *testing.T) {
+	withTempDataDir(t)
+	zipPath := writePluginZip(t, map[string]string{
+		"komari-plugin.json": `{"name":"Demo","short":"demo","version":"1.0.0"}`,
+		"script.js":          `function load() {}`,
+	})
+	if _, err := InstallZip(zipPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(DataDir, "demo")); err != nil {
+		t.Fatal(err)
+	}
+	info, err := Manifest("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Short != "demo" {
+		t.Fatalf("restored short = %q", info.Short)
+	}
+	if _, err := os.Stat(filepath.Join(DataDir, "demo", "script.js")); err != nil {
+		t.Fatalf("runtime cache was not restored: %v", err)
+	}
+}
+
 func TestInstallZipRejectsMissingManifest(t *testing.T) {
 	withTempDataDir(t)
 	zipPath := writePluginZip(t, map[string]string{"script.js": "function load() {}"})

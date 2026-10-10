@@ -15,10 +15,10 @@ import (
 // GET. Like the HTTP kinds, the input is lowercased, so any casing works
 // from JS.
 const (
-	hookWSConnect  hookKind = "wsconnect"
-	hookWSMessage  hookKind = "wsmessage"
-	hookWSSend     hookKind = "wssend"
-	hookWSClose    hookKind = "wsclose"
+	hookWSConnect hookKind = "wsconnect"
+	hookWSMessage hookKind = "wsmessage"
+	hookWSSend    hookKind = "wssend"
+	hookWSClose   hookKind = "wsclose"
 )
 
 // wsFrameHookTimeout bounds one frame-level callback. The agent read pumps
@@ -48,6 +48,7 @@ func (m *Manager) OnConnect(info *connection.ConnInfo) (deny bool, reason string
 		var denied bool
 		var why string
 		queued, timedOut := runHookTurn(h.host, "plugin wsConnect hook "+h.short, func(vm *goja.Runtime) {
+			defer m.persistAfterJob(h.short)
 			_ = h.host.RunJob(vm, "plugin wsConnect hook "+h.short, func() error {
 				res, err := h.fn(goja.Undefined(), wsHookContext(vm, info))
 				if err != nil {
@@ -104,6 +105,7 @@ func (m *Manager) runFrameHooks(kind hookKind, info *connection.ConnInfo, frameT
 		var drop bool
 		var hookErr error
 		queued, timedOut := runHookTurnTimeout(h.host, "plugin "+string(kind)+" hook "+h.short, wsFrameHookTimeout, func(vm *goja.Runtime) {
+			defer m.persistAfterJob(h.short)
 			msg := wsFrameObject(vm, info, frameType, next)
 			hookErr = h.host.RunJob(vm, "plugin "+string(kind)+" hook "+h.short, func() error {
 				res, err := h.fn(goja.Undefined(), wsHookContext(vm, info), msg)
@@ -152,6 +154,7 @@ func (m *Manager) OnClose(info *connection.ConnInfo) {
 	for _, h := range m.wsHooksFor(hookWSClose, info.Path) {
 		var hookErr error
 		queued, timedOut := runHookTurn(h.host, "plugin wsClose hook "+h.short, func(vm *goja.Runtime) {
+			defer m.persistAfterJob(h.short)
 			hookErr = h.host.RunJob(vm, "plugin wsClose hook "+h.short, func() error {
 				_, err := h.fn(goja.Undefined(), wsHookContext(vm, info))
 				return err

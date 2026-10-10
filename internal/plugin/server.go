@@ -366,6 +366,7 @@ func (m *Manager) routeHandler(short string) gin.HandlerFunc {
 			abortCh:    make(chan struct{}),
 		}
 		queued := host.RunOnLoop(func(vm *goja.Runtime) {
+			defer m.persistAfterJob(short)
 			req := routeRequest(vm, c, body)
 			res := routeResponseObject(vm, state)
 			runErr := host.RunJob(vm, "plugin route "+short, func() error {

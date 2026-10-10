@@ -882,10 +882,11 @@ func (m *Module) fsClose(fd int) error {
 		return fmt.Errorf("bad file descriptor: %d", fd)
 	}
 	m.runtime.RemoveResource(handle.resourceID)
+	err := handle.file.Close()
 	if m.onFileClose != nil {
 		m.onFileClose(fd)
 	}
-	return handle.file.Close()
+	return err
 }
 
 func (m *Module) WriteResolved(path string, data []byte, mode os.FileMode) error {

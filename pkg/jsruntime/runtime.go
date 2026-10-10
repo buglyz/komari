@@ -99,6 +99,9 @@ type Options struct {
 	// by exec, execFile, and their synchronous variants. Values less than one
 	// use Node.js' 1 MiB default.
 	MaxChildOutputBytes int
+	// OnFileClose is called after a JavaScript file descriptor is closed.
+	// Hosts can use it to persist changes made by the script.
+	OnFileClose func()
 }
 
 // Runtime owns one isolated JavaScript VM and its event loop. Public
@@ -265,6 +268,9 @@ func New(script string, options Options) (*Runtime, error) {
 		runtime.fileMu.Lock()
 		delete(runtime.files, fd)
 		runtime.fileMu.Unlock()
+		if options.OnFileClose != nil {
+			options.OnFileClose()
+		}
 	})
 	runtime.fsModule.SetExternalFileLookup(func(fd int) (*os.File, bool) {
 		runtime.fileMu.Lock()

@@ -7,13 +7,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
+	"github.com/komari-monitor/komari/database/files"
 	"github.com/komari-monitor/komari/database/models"
 )
 
-// InstallZip validates a plugin ZIP and extracts it into DataDir/<short>.
+// InstallZip validates a plugin ZIP and stores it in SQL. DataDir/<short> is
+// only a runtime cache used by the JavaScript engine and may be regenerated.
 // The archive must contain komari-plugin.json at its root. Archive limits
 // mirror the theme package format; path-traversal entries reject the whole
 // package instead of being skipped. Reinstalling over a running plugin
@@ -64,30 +67,43 @@ func InstallZip(zipPath string) (models.Plugin, error) {
 		return info, err
 	}
 
+	entries := make(map[string][]byte)
+	for _, file := range r.File {
+		if file.FileInfo().IsDir() {
+			continue
+		}
+		name, err := storedArchivePath(file.Name)
+		if err != nil {
+			return info, err
+		}
+		content, err := readArchiveFile(file, maxPluginFileSize)
+		if err != nil {
+			return info, err
+		}
+		entries[name] = content
+	}
+	if _, ok := entries[info.Entry]; !ok {
+		return info, fmt.Errorf("plugin entry %s does not exist", info.Entry)
+	}
+	for _, page := range info.Pages {
+		if page.Type == models.PageTypeIframe {
+			if _, ok := entries[page.File]; !ok {
+				return info, fmt.Errorf("plugin page %s does not exist", page.File)
+			}
+		}
+	}
+
 	if err := global.unload(info.Short); err != nil && !errors.Is(err, errNotLoaded) {
 		return info, fmt.Errorf("failed to unload running plugin %q before reinstall: %w", info.Short, err)
 	}
 
 	dir := filepath.Join(DataDir, info.Short)
-	if err := os.RemoveAll(dir); err != nil {
-		return info, fmt.Errorf("failed to remove existing plugin directory: %v", err)
-	}
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return info, fmt.Errorf("failed to create plugin directory: %v", err)
-	}
-	if err := extractPluginArchive(r.File, dir); err != nil {
-		_ = os.RemoveAll(dir)
+	namespace := files.NamespaceForDir(DataDir)
+	if err := files.ReplaceDirectory(namespace, files.ScopePlugin, info.Short, entries); err != nil {
 		return info, err
 	}
-	if _, err := os.Stat(filepath.Join(dir, info.Entry)); err != nil {
-		_ = os.RemoveAll(dir)
-		return info, fmt.Errorf("plugin entry %s does not exist", info.Entry)
-	}
-	for _, page := range info.Pages {
-		if _, err := os.Stat(filepath.Join(dir, page.File)); err != nil {
-			_ = os.RemoveAll(dir)
-			return info, fmt.Errorf("plugin page %s does not exist", page.File)
-		}
+	if err := files.MaterializeDirectory(namespace, files.ScopePlugin, info.Short, dir); err != nil {
+		return info, err
 	}
 	if global.stateStore().get(info.Short).Enabled {
 		if err := global.restartPlugin(info.Short); err != nil {
@@ -103,6 +119,9 @@ func validatePluginArchive(files []*zip.File) error {
 	}
 	var total uint64
 	for _, file := range files {
+		if _, err := storedArchivePath(file.Name); err != nil {
+			return err
+		}
 		if file.FileInfo().IsDir() {
 			continue
 		}
@@ -115,6 +134,33 @@ func validatePluginArchive(files []*zip.File) error {
 		}
 	}
 	return nil
+}
+
+func storedArchivePath(name string) (string, error) {
+	if strings.Contains(name, "\\") || strings.HasPrefix(name, "/") {
+		return "", fmt.Errorf("plugin archive contains an invalid path %q", name)
+	}
+	clean := path.Clean(name)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("plugin archive contains an invalid path %q", name)
+	}
+	return clean, nil
+}
+
+func readArchiveFile(file *zip.File, limit uint64) ([]byte, error) {
+	rc, err := file.Open()
+	if err != nil {
+		return nil, fmt.Errorf("open plugin file %s: %w", file.Name, err)
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(io.LimitReader(rc, int64(limit)+1))
+	if err != nil {
+		return nil, fmt.Errorf("read plugin file %s: %w", file.Name, err)
+	}
+	if uint64(len(data)) > limit {
+		return nil, fmt.Errorf("plugin file %s exceeds the %d byte limit", file.Name, limit)
+	}
+	return data, nil
 }
 
 func extractPluginArchive(files []*zip.File, dir string) error {

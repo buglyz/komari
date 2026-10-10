@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
@@ -22,7 +21,7 @@ func GetConfiguration(short string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	info, err := readManifest(filepath.Join(DataDir, short))
+	info, err := readInstalledManifest(short)
 	if err != nil {
 		return values, nil // not installed (or unreadable): keep saved values
 	}

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
 )
 
@@ -129,5 +130,8 @@ func TestPeekThemeFromZipAcceptsLocalizedMetadata(t *testing.T) {
 	}
 	if installed.Short != "localized-theme" {
 		t.Fatalf("installed short = %q, want localized-theme", installed.Short)
+	}
+	if err := dbcore.Close(); err != nil {
+		t.Fatalf("close test database: %v", err)
 	}
 }

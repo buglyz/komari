@@ -64,6 +64,7 @@ func (m *Manager) runCronJob(short, name string, fn goja.Callable) {
 		return
 	}
 	host.RunOnLoop(func(vm *goja.Runtime) {
+		defer m.persistAfterJob(short)
 		_ = host.RunJob(vm, "plugin cron "+name, func() error {
 			_, err := fn(goja.Undefined())
 			return err

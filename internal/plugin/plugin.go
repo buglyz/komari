@@ -32,6 +32,7 @@ import (
 	"github.com/dop251/goja"
 	"github.com/dop251/goja_nodejs/require"
 	"github.com/gin-gonic/gin"
+	"github.com/komari-monitor/komari/database/files"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/internal/scheduler"
 	"github.com/komari-monitor/komari/pkg/jsruntime"
@@ -244,7 +245,10 @@ func (m *Manager) instanceFor(short string) *Instance {
 // a manager read lock through rpcHandler) without deadlocking. On failure the
 // instance is dropped and its hooks and RPC methods are cleaned up.
 func (m *Manager) load(short string) error {
-	dir := filepath.Join(DataDir, short)
+	if err := ensurePlugin(short); err != nil {
+		return err
+	}
+	dir := pluginDir(short)
 	info, err := readManifest(dir)
 	if err != nil {
 		return err
@@ -270,7 +274,11 @@ func (m *Manager) load(short string) error {
 	m.instances[short] = inst
 	m.mu.Unlock()
 
-	storageDir := filepath.Join(StorageDir, short)
+	storageDir := pluginStorageDir(short)
+	if _, err := restorePluginStorage(short); err != nil {
+		m.dropInstance(short, inst)
+		return fmt.Errorf("restore plugin storage: %w", err)
+	}
 	if err := os.MkdirAll(storageDir, 0755); err != nil {
 		m.dropInstance(short, inst)
 		return fmt.Errorf("create plugin storage dir: %w", err)
@@ -287,6 +295,7 @@ func (m *Manager) load(short string) error {
 		MaxChildOutputBytes: info.Permissions.MaxChildOutputBytes,
 		Timeout:             time.Duration(info.Permissions.TimeoutSeconds) * time.Second,
 		Console:             logs,
+		OnFileClose:         func() { m.persistAfterJob(short) },
 		ConfigureHost: func(host *jsruntime.Host, registry *require.Registry) {
 			inst.mu.Lock()
 			inst.host = host
@@ -305,10 +314,16 @@ func (m *Manager) load(short string) error {
 
 	if rt.HasFunction("load") {
 		if err := rt.CallVoid("load"); err != nil {
+			_ = syncPluginStorage(short)
 			rt.Close()
 			m.dropInstance(short, inst)
 			return fmt.Errorf("plugin %q load() failed: %w", short, err)
 		}
+	}
+	if err := syncPluginStorage(short); err != nil {
+		rt.Close()
+		m.dropInstance(short, inst)
+		return fmt.Errorf("persist plugin %q after load: %w", short, err)
 	}
 	m.mu.Lock()
 	stillLoaded := m.instances[short] == inst
@@ -384,6 +399,9 @@ func (m *Manager) unload(short string) error {
 				unloadErr = fmt.Errorf("plugin %q unload() failed: %w", short, err)
 			}
 		}
+		if err := syncPluginStorage(short); err != nil && unloadErr == nil {
+			unloadErr = fmt.Errorf("persist plugin %q during unload: %w", short, err)
+		}
 	}
 	m.mu.Lock()
 	inst.mu.Lock()
@@ -425,8 +443,7 @@ func (m *Manager) closeAll() error {
 }
 
 func (m *Manager) setEnabled(short string, enabled, approved bool) error {
-	dir := filepath.Join(DataDir, short)
-	info, err := readManifest(dir)
+	info, err := readInstalledManifest(short)
 	if err != nil {
 		return err
 	}
@@ -471,24 +488,17 @@ func (m *Manager) setEnabled(short string, enabled, approved bool) error {
 }
 
 func (m *Manager) loadAll() error {
-	entries, err := os.ReadDir(DataDir)
+	entries, err := installedPluginShorts()
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
 		return err
 	}
 	var errs []error
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		short := entry.Name()
+	for _, short := range entries {
 		st := m.stateStore().get(short)
 		if !st.Enabled || m.instanceFor(short) != nil {
 			continue
 		}
-		info, err := readManifest(filepath.Join(DataDir, short))
+		info, err := readInstalledManifest(short)
 		if err != nil {
 			errs = append(errs, m.disableWithError(short, st, err))
 			continue
@@ -511,7 +521,7 @@ func (m *Manager) loadAll() error {
 // plugin and keeps the error visible, mirroring the startup load path.
 func (m *Manager) restartPlugin(short string) error {
 	st := m.stateStore().get(short)
-	info, err := readManifest(filepath.Join(DataDir, short))
+	info, err := readInstalledManifest(short)
 	if err != nil {
 		return m.disableWithError(short, st, err)
 	}
@@ -548,17 +558,13 @@ func (m *Manager) disableWithError(short string, st PluginState, err error) erro
 }
 
 func (m *Manager) list() []Info {
-	entries, err := os.ReadDir(DataDir)
+	entries, err := installedPluginShorts()
 	if err != nil {
 		return []Info{}
 	}
 	infos := make([]Info, 0, len(entries))
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		short := entry.Name()
-		info, err := readManifest(filepath.Join(DataDir, short))
+	for _, short := range entries {
+		info, err := readInstalledManifest(short)
 		if err != nil {
 			continue // mirror the theme list: skip unreadable entries
 		}
@@ -584,17 +590,22 @@ func (m *Manager) delete(short string) error {
 	if !validShort(short) {
 		return fmt.Errorf("invalid plugin short %q", short)
 	}
-	dir := filepath.Join(DataDir, short)
-	if _, err := os.Stat(dir); err != nil {
-		if os.IsNotExist(err) {
+	if err := ensurePlugin(short); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("%w: %q", ErrNotInstalled, short)
 		}
 		return err
 	}
-	if err := os.RemoveAll(dir); err != nil {
+	if err := files.DeleteDirectory(pluginNamespace(), files.ScopePlugin, short); err != nil {
 		return err
 	}
-	if err := os.RemoveAll(filepath.Join(StorageDir, short)); err != nil {
+	if err := files.DeleteDirectory(pluginNamespace(), files.ScopePluginData, short); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(pluginDir(short)); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(pluginStorageDir(short)); err != nil {
 		return err
 	}
 	m.stateStore().delete(short)
@@ -606,7 +617,7 @@ func Manifest(short string) (models.Plugin, error) {
 	if !validShort(short) {
 		return models.Plugin{}, fmt.Errorf("invalid plugin short %q", short)
 	}
-	return readManifest(filepath.Join(DataDir, short))
+	return readInstalledManifest(short)
 }
 
 // ResolvePublicFile returns the absolute path of a file that belongs to a
@@ -622,7 +633,7 @@ func ResolvePublicFile(short, name string) (string, error) {
 	if !global.stateStore().get(short).Enabled {
 		return "", fmt.Errorf("plugin %q is not enabled", short)
 	}
-	info, err := readManifest(filepath.Join(DataDir, short))
+	info, err := readInstalledManifest(short)
 	if err != nil {
 		return "", err
 	}
@@ -648,7 +659,10 @@ func ResolveFile(short, name string) (string, error) {
 	if !filepath.IsLocal(name) {
 		return "", fmt.Errorf("invalid plugin file path %q", name)
 	}
-	dir := filepath.Join(DataDir, short)
+	if err := ensurePlugin(short); err != nil {
+		return "", err
+	}
+	dir := pluginDir(short)
 	full := filepath.Join(dir, name)
 	if !withinDir(full, dir) {
 		return "", fmt.Errorf("invalid plugin file path %q", name)

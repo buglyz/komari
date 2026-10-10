@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/komari-monitor/komari/database/files"
 	"github.com/komari-monitor/komari/internal/config"
 )
 
@@ -35,8 +36,6 @@ const (
 )
 
 func init() {
-	_ = os.MkdirAll("./data/theme", 0755)
-
 	var err error
 	defaultDistFiles, err = loadEmbeddedDist()
 	if err != nil {
@@ -88,37 +87,6 @@ func stripServiceWorkerRegistration(html string) string {
 	return strings.ReplaceAll(html, `<script id="vite-plugin-pwa:register-sw" src="/registerSW.js"></script>`, "")
 }
 
-// isSafePath 验证路径是否在指定的基础目录内，防止路径穿透攻击
-func isSafePath(basePath, targetPath string) bool {
-	// 获取基础目录的绝对路径
-	absBase, err := filepath.Abs(basePath)
-	if err != nil {
-		return false
-	}
-
-	// 清理目标路径，移除 ../ 等
-	cleanTarget := filepath.Clean(targetPath)
-
-	// 拼接完整路径
-	fullPath := filepath.Join(absBase, cleanTarget)
-
-	// 获取绝对路径
-	absTarget, err := filepath.Abs(fullPath)
-	if err != nil {
-		return false
-	}
-
-	// 检查目标路径是否以基础路径开头
-	// 使用 filepath.Rel 更可靠地检查路径关系
-	rel, err := filepath.Rel(absBase, absTarget)
-	if err != nil {
-		return false
-	}
-
-	// 如果相对路径以 .. 开头，说明目标在基础目录之外
-	return !strings.HasPrefix(rel, "..") && rel != ".."
-}
-
 // Static 注册静态资源和 SPA 路由处理
 func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 	static(r, noRoute, false)
@@ -162,21 +130,14 @@ func static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc), force
 				return nil, "", false
 			}
 
-			themeBasePath := filepath.Join(DataDir, ThemesDir, themeID)
-
-			if !isSafePath(themeBasePath, cleanPath) {
-				return nil, "", false
-			}
-
-			localPath := filepath.Join(themeBasePath, cleanPath)
-			// 检查文件是否存在且不是目录
-			if info, err := os.Stat(localPath); err == nil && !info.IsDir() {
-				content, err := os.ReadFile(localPath)
-				if err == nil {
-					return content, mime.TypeByExtension(filepath.Ext(localPath)), true
+			themeNamespace := files.NamespaceForDir(filepath.Join(DataDir, ThemesDir))
+			found, err := files.EnsureDirectory(themeNamespace, files.ScopeTheme, themeID, filepath.Join(DataDir, ThemesDir, themeID))
+			if err == nil && found {
+				content, readErr := files.ReadFile(themeNamespace, files.ScopeTheme, themeID, cleanPath)
+				if readErr == nil {
+					return content, mime.TypeByExtension(filepath.Ext(cleanPath)), true
 				}
 			}
-			// 本地文件不存在，或读取失败 -> 继续向下回退
 		}
 
 		// 2. 尝试从嵌入式 defaultTheme/{cleanPath} 读取
@@ -249,11 +210,20 @@ func static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc), force
 	// ================= 路由定义 =================
 	// 1. Favicon 优先策略
 	r.GET("/favicon.ico", func(c *gin.Context) {
-		// 优先：./data/favicon.ico
-		localFavicon := filepath.Join(DataDir, FaviconFile)
+		// 优先读取 SQL 中的自定义 favicon；本地旧文件只在首次访问时导入。
+		systemNamespace := files.NamespaceForDir(DataDir)
+		favicon, err := files.ReadFile(systemNamespace, files.ScopeSystem, "system", FaviconFile)
+		if err != nil {
+			localFavicon := filepath.Join(DataDir, FaviconFile)
+			if legacy, readErr := os.ReadFile(localFavicon); readErr == nil {
+				if saveErr := files.PutFile(systemNamespace, files.ScopeSystem, "system", FaviconFile, legacy, 0o644); saveErr == nil {
+					favicon = legacy
+				}
+			}
+		}
 		if !forceDefaultTheme {
-			if _, err := os.Stat(localFavicon); err == nil {
-				c.File(localFavicon)
+			if len(favicon) > 0 {
+				c.Data(http.StatusOK, mime.TypeByExtension(filepath.Ext(FaviconFile)), favicon)
 				return
 			}
 		}

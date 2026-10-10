@@ -1,16 +1,18 @@
 package admin
 
 import (
+	"errors"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/database/accounts"
 	"github.com/komari-monitor/komari/database/auditlog"
+	"github.com/komari-monitor/komari/database/files"
 	"github.com/komari-monitor/komari/utils/geoip"
 	"github.com/komari-monitor/komari/web/api"
+	"gorm.io/gorm"
 )
 
 // update.go
@@ -78,7 +80,7 @@ func UploadFavicon(c *gin.Context) {
 		}
 		return
 	}
-	if err := os.WriteFile("./data/favicon.ico", data, 0644); err != nil {
+	if err := files.PutFile(files.NamespaceForDir("./data"), files.ScopeSystem, "system", "favicon.ico", data, 0o644); err != nil {
 		api.RespondError(c, http.StatusInternalServerError, "Failed to save favicon: "+err.Error())
 		return
 	}
@@ -88,8 +90,8 @@ func UploadFavicon(c *gin.Context) {
 }
 
 func DeleteFavicon(c *gin.Context) {
-	if err := os.Remove("./data/favicon.ico"); err != nil {
-		if os.IsNotExist(err) {
+	if err := files.DeleteFile(files.NamespaceForDir("./data"), files.ScopeSystem, "system", "favicon.ico"); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			api.RespondError(c, http.StatusNotFound, "Favicon not found")
 		} else {
 			api.RespondError(c, http.StatusInternalServerError, "Failed to delete favicon: "+err.Error())

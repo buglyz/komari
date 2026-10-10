@@ -3,11 +3,10 @@ package database
 import (
 	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
 
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/files"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/internal/config"
 	"github.com/komari-monitor/komari/internal/managedconfig"
@@ -112,7 +111,11 @@ func themeConfigurationItems(short string) []models.ManagedThemeConfigurationIte
 			return nil
 		}
 	} else {
-		data, err := os.ReadFile(filepath.Join("./data/theme", short, "komari-theme.json"))
+		namespace := files.NamespaceForDir("./data/theme")
+		if _, err := files.RestoreOrImport(namespace, files.ScopeTheme, short, "./data/theme/"+short); err != nil {
+			return nil
+		}
+		data, err := files.ReadFile(namespace, files.ScopeTheme, short, "komari-theme.json")
 		if err != nil || json.Unmarshal(data, &manifest) != nil {
 			return nil
 		}

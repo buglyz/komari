@@ -416,6 +416,12 @@ func doInitialize() error {
 	// 根据数据库类型选择不同的连接方式
 	switch flags.ApplyDatabaseTypeNormalization() {
 	case flags.DatabaseTypeSQLite:
+		databaseFile := resolveDatabaseFile()
+		if databaseFile != ":memory:" && !strings.HasPrefix(strings.ToLower(databaseFile), "file:") {
+			if err := os.MkdirAll(filepath.Dir(databaseFile), 0o755); err != nil {
+				return fmt.Errorf("create SQLite database directory: %w", err)
+			}
+		}
 		// _txlock=immediate lets writes acquire their lock before reads can
 		// turn into a lock-upgrade conflict. sqlitetune applies the remaining
 		// per-connection PRAGMAs whenever database/sql opens a connection.
@@ -502,6 +508,8 @@ func doInitialize() error {
 		&models.MessageSenderProvider{},
 		&models.ThemeConfiguration{},
 		&models.PluginConfiguration{},
+		&models.StoredFile{},
+		&models.PluginState{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)

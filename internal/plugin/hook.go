@@ -212,6 +212,7 @@ func (m *Manager) runRequestHook(r *http.Request, body []byte, h *hookEntry) ([]
 	nextBody := body
 	var hookErr error
 	queued, timedOut := runHookTurn(h.host, "plugin request hook "+h.short, func(vm *goja.Runtime) {
+		defer m.persistAfterJob(h.short)
 		reqObj := hookRequestObject(vm, r, nextBody)
 		hookErr = h.host.RunJob(vm, "plugin request hook "+h.short, func() error {
 			_, err := h.fn(goja.Undefined(), reqObj)
@@ -257,6 +258,7 @@ func (m *Manager) runRequestHook(r *http.Request, body []byte, h *hookEntry) ([]
 func (m *Manager) runResponseHook(r *http.Request, bw *bufferedResponseWriter, h *hookEntry) error {
 	var hookErr error
 	queued, timedOut := runHookTurn(h.host, "plugin response hook "+h.short, func(vm *goja.Runtime) {
+		defer m.persistAfterJob(h.short)
 		resObj := hookResponseObject(vm, bw)
 		hookErr = h.host.RunJob(vm, "plugin response hook "+h.short, func() error {
 			_, err := h.fn(goja.Undefined(), hookRequestObject(vm, r, nil), resObj)
